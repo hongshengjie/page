@@ -1,33 +1,28 @@
 {
     "avatar": "http://ww2.sinaimg.cn/small/74990035jw1f1rjkd681bj20rs0rsdhg.jpg",
-    "name": "你的大名",
-	"tag": "Web前端/iOS/技术宅",
-    "desc": "你的简介（建议一两句话）",
+    "name": "hongshengjie",
+	"tag": "golang/后端/技术宅",
+    "desc": "是个厉害的家伙",
     "skills": {
-        "Javascript": 8,
-		"Python": 6,
-		
-		"invisible-split-line-1": -1,
-
-		"Node.js": 4
+        "Golang": 8,
+		"gio": 6,
+		"Javascript": 5,
+		"p2p": 4
     },
     "projects": [{
-		"name": "你的项目A",
+		"name": "crud",
 		"image": "https://d13yacurqjgara.cloudfront.net/users/138819/screenshots/2578899/dribbble_800x600_01_1x.png",
-		"tags": ["2016年", "项目标签"],
-		"description": "你的项目A的简介",
-		"link_text": "网站链接",
-		"link": "https://dribbble.com/"
+		"tags": ["mysql", "orm"],
+		"description": "很好用的mysql持久层orm开发框架",
+		"link_text": "github",
+		"link": "https://github.com/hongshengjie/crud"
 	}, {
-		"name": "你的作品B",
+		"name": "myhosts",
 		"image": "https://d13yacurqjgara.cloudfront.net/users/4094/screenshots/2578885/time-lords-drib_1x.jpg",
-		"description": "你的作品B的简介",
-		"tags": ["Github", "设计"],
-		"link_text": "Github地址",
-		"link": "https://github.com/"
+		"description": "",
+		"tags": ["hosts", "gios"],
+		"link_text": "github",
+		"link": "https://github.com/hongshengjie/myhosts"
 	}],
-	"reward": [
-	    "https://raytaylorlin-blog.oss-cn-shenzhen.aliyuncs.com/image/about/weixin_reward.png",
-		"https://raytaylorlin-blog.oss-cn-shenzhen.aliyuncs.com/image/about/zhifubao_reward.png"
-	]
+	"reward": []
 }

@@ -1,19 +1,7 @@
 [{
-    "image": "http://lorempixel.com/580/250/nature/1",
+    "image": "",
     "align": "center",
-    "title": "This is our big Tagline!",
-    "subtitle": "Here's our small slogan.",
+    "title": "知行合一",
+    "subtitle": "欲多则心散，心散则志衰",
 	"link": "/"
-}, {
-    "image": "http://lorempixel.com/580/250/nature/2",
-    "align": "left",
-    "title": "Left Aligned Caption",
-    "subtitle": "Here's our small slogan.",
-	"link": null
-}, {
-    "image": "http://lorempixel.com/580/250/nature/3",
-    "align": "right",
-    "title": "Right Aligned Caption",
-    "subtitle": "Here's our small slogan.",
-	"link": null
 }]
