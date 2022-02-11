@@ -1,5 +1,5 @@
 {
-    "avatar": "http://ww2.sinaimg.cn/small/74990035jw1f1rjkd681bj20rs0rsdhg.jpg",
+    "avatar": "/image/face.jpeg",
     "name": "hongshengjie",
 	"tag": "golang/后端/技术宅",
     "desc": "是个厉害的家伙",
@@ -11,15 +11,15 @@
     },
     "projects": [{
 		"name": "crud",
-		"image": "https://d13yacurqjgara.cloudfront.net/users/138819/screenshots/2578899/dribbble_800x600_01_1x.png",
+		"image": "/image/go-mysql.jpeg",
 		"tags": ["mysql", "orm"],
-		"description": "很好用的mysql持久层orm开发框架",
+		"description": "mysql持久层orm开发框架",
 		"link_text": "github",
 		"link": "https://github.com/hongshengjie/crud"
 	}, {
 		"name": "myhosts",
-		"image": "https://d13yacurqjgara.cloudfront.net/users/4094/screenshots/2578885/time-lords-drib_1x.jpg",
-		"description": "",
+		"image": "/image/myhosts.png",
+		"description": "一款跨平台修改系统hosts文件的GUI程序",
 		"tags": ["hosts", "gios"],
 		"link_text": "github",
 		"link": "https://github.com/hongshengjie/myhosts"
