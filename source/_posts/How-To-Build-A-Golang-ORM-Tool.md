@@ -59,8 +59,8 @@ func FindUsers() ([]*User, error) {
 当我们写少量这样的代码的时候我们可能还觉得轻松，但是当你业务工期排的很紧，并且要写大量的定制化查询的时候，这样的重复代码会越来越多。
 上面的的代码我们发现有这么几个问题：
 1. SQL 语句是硬编码在程序里面的，当我需要增加查询条件的时候我需要另外再写一个方法，整个方法需要拷贝一份，很不灵活。
-2. 第2行下面的代码都是一样重复的，不管sql语句是怎么样的。
-3. 我们发现第一行sql语句和`rows.Scan()`那行，写的枯燥层度是和表字段的数量成正比的，如果一个表有50个字段或者100个字段，手写是非常乏味的。
+2. 第2行下面的代码都是一样重复的，不管sql语句后面的条件是怎么样的。
+3. 我们发现第1行SQL语句编写和`rows.Scan()`那行，写的枯燥层度是和表字段的数量成正比的，如果一个表有50个字段或者100个字段，手写是非常乏味的。
 4. 在开发过程中`rows.Close()` 和 `rows.Err()`忘记写是常见的错误。
 
 我们再看一下插入的写法：
@@ -104,13 +104,13 @@ func InsertUser(u *User) error {
 
 我们尝试做个简略版的查询语句构造器
 
-### SQLBuilder的实现
+### SQL SelectBuilder的实现
 ```go
 
 type SelectBuilder struct {
 	builder   *strings.Builder
 	column    []string
-	tabelName string
+	tableName string
 	where     []func(s *SelectBuilder)
 	args      []interface{}
 	orderby   string
@@ -155,7 +155,7 @@ func (s *SelectBuilder) Query() (string, []interface{}) {
 		s.builder.WriteString("`" + v + "`")
 	}
 	s.builder.WriteString(" FROM ")
-	s.builder.WriteString("`" + s.tabelName + "` ")
+	s.builder.WriteString("`" + s.tableName + "` ")
 	if len(s.where) > 0 {
 		s.builder.WriteString("WHERE ")
 		for k, f := range s.where {
@@ -201,13 +201,13 @@ func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	defer rows.Close()
 	// dst的地址
-	val := reflect.ValueOf(dst) //  &[]*User
+	val := reflect.ValueOf(dst) //  &[]*main.User
 	// 判断是否是指针类型，go是值传递，只有传指针才能让更改生效
 	if val.Kind() != reflect.Ptr {
 		return errors.New("dst not a pointer")
 	}
 	// 指针指向的Value
-	val = reflect.Indirect(val) // []*User
+	val = reflect.Indirect(val) // []*main.User
 	if val.Kind() != reflect.Slice {
 		return errors.New("dst not a pointer to slice")
 	}
@@ -227,7 +227,7 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 		return errors.New("NumField and cols not match")
 	}
 
-	//结构体的json tag的value 对应 字段index
+	//结构体的json tag的value 对应 字段在结构体中的index
 	tagIdx := make(map[string]int) //map tag -> field idx
 	for i := 0; i < stru.NumField(); i++ {
 		tagname := stru.Field(i).Tag.Get("json")
@@ -237,7 +237,7 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	}
 	resultType := make([]reflect.Type, 0, len(cols)) // [int64,string,int64,time.Time,time.Time]
 	index := make([]int, 0, len(cols))               // [0,1,2,3,4,5]
-	// 查找和列名相对应的结构体jsontag name 的字段类型，保存类型和序号 到resultType 和 index 中
+	// 查找和列名相对应的结构体json tag name 的字段类型，保存类型和序号 到resultType 和 index 中
 	for _, v := range cols {
 		if i, ok := tagIdx[v]; ok {
 			resultType = append(resultType, stru.Field(i).Type)
@@ -270,8 +270,8 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	return rows.Err()
 }
 ```
-1. 以上主要的思想就是通过`reflect` 来获取传入dst的Slice类型，并通过反射创建对象，具体的步骤请仔细阅读注释。
-2. 通过制定的json tag 可以把查询结果和结构体字段mapping起来，即使查询语句中字段不按照表结构顺序。
+1. 以上主要的思想就是通过`reflect`包来获取传入dst的Slice类型，并通过反射创建对象，具体的步骤请仔细阅读注释。
+2. 通过指定的json tag 可以把查询结果和结构体字段mapping起来，即使查询语句中字段不按照表结构顺序。
 ![](/image/scaner.png)
 3. ScanSlice是通用的Scanner。
 4. 使用反射创建对象没有传统的方式高效，但是换来的巨大的灵活性在某些场景下是值得的。
@@ -291,7 +291,7 @@ func FindUserReflect() ([]*User, error) {
 		OrderBy("id").
 		Limit(0, 20).
 		Query()
-	fmt.Println(sql, args)
+	
 	rows, err := db.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -314,7 +314,7 @@ SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM `user` WHERE `id` > ? AND `age` > 
 ```go
 Select("id", "name", "age", "ctime", "mtime").
 ```
-其中传入的字段需要我们硬编码，我们可不可以再进一步，通过表结构定义来生成我们的golang结构体呢？答案是肯定的，要实现这一步我们需要一个SQL语句的[解析器](https://github.com/xwb1989/sqlparser)，把SQL DDL语句解析成go语言中的`struct`对象，其所包含的表名，列名、列类型、注释都能获取到，再通过这些对象和写好的模板代码来生成我们实际业务使用的代码，这样写代码就能飞快了。
+其中传入的字段需要我们硬编码，我们可不可以再进一步，通过表结构定义来生成我们的golang结构体呢？答案是肯定的，要实现这一步我们需要一个SQL语句的[解析器](https://github.com/xwb1989/sqlparser)，把SQL DDL语句解析成go语言中的`struct`对象，其所包含的表名，列名、列类型、注释等都能获取到，再通过这些对象和写好的模板代码来生成我们实际业务使用的代码，这样写代码就能飞快了。
 
 比如我们生成
 ```go
@@ -336,11 +336,11 @@ Select(Columns...)
 ## 不止ORM
 
 如果我们可以根据表结构生成后端持久层的代码，那是不是我们可以扩展一步，可以不可以把后端GRPC API也同时生成呢？答案是肯定的。
-因为在大部分的开发中接口的功能就是给外面暴露API,使外部能够通过RPC调用读写我们的数据库，所以理论上来说RPC接口的message结构和我们的后端持久成model，还有表结构的字段不会相差太大。
+因为在大部分的开发中接口的功能就是暴露API,使外部能够通过RPC调用读写我们的数据库，所以理论上来说RPC接口的message结构和我们的后端持久成model，还有表结构的字段不会相差太大。
 ![](/image/sql-go-proto.png)
 ### GRPC API
 
-一般在日常的开发中，我们对表做的一些操作离不开增删改查，我们给外部暴露的API也同样是如此，往往按照标准我们可以定义出针对某个表的 `Create`、`Delete` 、`Update` `Get` `List` 的 Method 和Request以及Response。
+一般在日常的开发中，我们对表做的一些操作离不开增删改查，我们给外部暴露的API也同样是如此，往往按照标准我们可以定义出针对某个表的 `Create`、`Delete` 、`Update` `Get` `List` 的 Method 和Request以及Response。比如下面的proto定义，用这个做模板，只需要把里面的User相关信息替换就行了。 
 
 ```proto
 syntax="proto3";
