@@ -406,8 +406,8 @@ message ListUsersResp{
 
 
 ## 总结
-1. 通过database/sql 库开发有较大痛点，ORM的存在是有意义的，能够提高开发效率和质量
-2. ORM两个关键的部分是SQLBuilder和Scanner的实现
+1. 通过database/sql 库开发有较大痛点，ORM的存在是有意义的，能够提高开发效率和质量。
+2. ORM两个关键的部分是SQLBuilder和Scanner的实现。
 3. 通过golang的template 模板库我们可以从数据表结构定义直接生成 持久成代码，GRPC API，GRPC Service的实现，通过自动化工具成倍的提升开发效率，开发质量。
 
 
