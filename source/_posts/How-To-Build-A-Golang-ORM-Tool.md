@@ -272,7 +272,7 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 ```
 1. 以上主要的思想就是通过`reflect`包来获取传入dst的Slice类型，并通过反射创建对象，具体的步骤请仔细阅读注释。
 2. 通过指定的json tag 可以把查询结果和结构体字段mapping起来，即使查询语句中字段不按照表结构顺序。
-![](/image/scaner.png)
+![](/image/scanner.png)
 3. ScanSlice是通用的Scanner。
 4. 使用反射创建对象没有传统的方式高效，但是换来的巨大的灵活性在某些场景下是值得的。
 
