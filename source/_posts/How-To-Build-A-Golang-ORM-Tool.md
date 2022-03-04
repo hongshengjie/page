@@ -294,9 +294,6 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 3. ScanSlice是通用的Scanner。
 4. 使用反射创建对象没有传统的方式高效，但是换来的巨大的灵活性在某些场景下是值得的。
 
-
-## 自动生成
-
 有了SQLBuilder和Scanner 我们就可以这样写查询函数了：
 
 ```go 
@@ -328,6 +325,9 @@ func FindUserReflect() ([]*User, error) {
 SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM `user` WHERE `id` > ? AND `age` > ? ORDER BY id LIMIT 20 OFFSET 0  [0 0]
 ```
 
+
+
+## 自动生成
 通过上面的使用的例子来看，我们的工作轻松了不少：
 - 第一是SQL语句不需要硬编码了；
 - 第二是Scan不需要写大量结构体字段和的乏味的重复代码。
@@ -335,9 +335,23 @@ SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM `user` WHERE `id` > ? AND `age` > 
 ```go
 Select("id", "name", "age", "ctime", "mtime").
 ```
-其中传入的字段需要我们硬编码，我们可不可以再进一步，通过表结构定义来生成我们的golang结构体呢？答案是肯定的，要实现这一步我们需要一个SQL语句的[解析器](https://github.com/xwb1989/sqlparser)，把SQL DDL语句解析成go语言中的`struct`对象，其所包含的表名，列名、列类型、注释等都能获取到，再通过这些对象和写好的模板代码来生成我们实际业务使用的代码，这样写代码就能飞快了。
+其中传入的字段需要我们硬编码，我们可不可以再进一步，通过表结构定义来生成我们的golang结构体呢？答案是肯定的，要实现这一步我们需要一个SQL语句的[解析器](https://github.com/xwb1989/sqlparser)，把SQL DDL语句解析成go语言中如下的`Table`对象，其所包含的表名，列名、列类型、注释等都能获取到，再通过这些对象和写好的模板代码来生成我们实际业务使用的代码。
 
 举个模板代码的例子：
+```go
+type Table struct {
+	TableName   string    // table name
+	GoTableName string    // go struct name
+	PackageName string    // package name
+	Fields      []*Column // columns
+}
+type Column struct {
+	ColumnName    string // column_name
+	ColumnType    string // column_type
+	ColumnComment string // column_comment
+}
+```
+使用以上`Table`对象的模板：
 ```go
 type {{.GoTableName}} struct {
 	{{- range .Fields }}
@@ -378,6 +392,44 @@ var Columns = []string{"id","name","age","ctime","mtime"}
 那么我们在查询的时候就可以这样使用
 ```go
 Select(Columns...)
+```
+## reflect真的有必要吗？
+
+由于我们SELECT时选择查找的字段和顺序是不固定的，
+我们有可能 `SELECT id,name,age FROM user` ，
+也可能 `SELECT name,id FROM user`，有很大的任意性，这种情况使用反射来确定结构体tag和查询的列名来的映射关系是必须的。
+但是有一种情况我们不需要用到反射，而且是一种最常用的情况，即：查询的字段名和表结构的列名一致，且顺序一致。
+这时候我们可以这么写，通过`DeepEqual`来判断查询字段和表结构字段是否一致来决定需要通过反射还是通过传统方法来创建对象，
+用传统方式创建对象的第12行令我们痛苦，可以通过模板来自动生成避免手写， 
+这样既灵活方面好用，性能又没有下降，看起来是一个比较完美的解决方案。 
+```go
+func FindUserNoReflect(b *SelectBuilder) ([]*User, error) {
+	sql, args := b.Query()
+	rows, err := db.QueryContext(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	result := []*User{}
+	if DeepEqual(b.column, Columns) {
+		defer rows.Close()
+		for rows.Next() {
+			a := &User{}
+			if err := rows.Scan(&a.Id, &a.Name, &a.Age, &a.Ctime, &a.Mtime); err != nil {
+				return nil, err
+			}
+			result = append(result, a)
+		}
+		if rows.Err() != nil {
+			return nil, rows.Err()
+		}
+		return result, nil
+	}
+	err = ScanSlice(rows, &result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 ```
 ## 不止ORM
 
