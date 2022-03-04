@@ -406,12 +406,14 @@ message ListUsersResp{
 
 
 ## 总结
-1. 通过database/sql 库开发有较大痛点，ORM的存在是有意义的，能够提高开发效率和质量。
+1. 通过database/sql 库开发有较大痛点，ORM就是为了解决以上问题而生，其存在是有意义的。
 2. ORM两个关键的部分是SQLBuilder和Scanner的实现。
-3. 通过golang的template 模板库我们可以从数据表结构定义直接生成 持久成代码，GRPC API，GRPC Service的实现，通过自动化工具成倍的提升开发效率，开发质量。
+3. 通过golang的template模板库我们可以从数据表结构定义直接生成 持久成代码，GRPC API，GRPC Service的实现，通过自动化工具成倍的提升开发效率，开发质量。
 
 
 
-
+## 展望
+1. 服务端接口和持久层代码都能自动生成，那么前端呢？前端HTML的`form`或者`table`是否能和我们的GRPC message一一对应呢？JavaScript调用接口的代码也能通过模板自动生成？
+2. 未来是否可以只通过设计表结构，通过工具，我们们就能把后端和前端的代码都生成好，实现全自动化编程。我想这个是值得期待的。 
 
 
