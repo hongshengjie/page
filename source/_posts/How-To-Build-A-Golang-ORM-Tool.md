@@ -9,7 +9,7 @@ tags: [golang,orm,grpc,proto]
 
 ### 直接使用database/sql的痛点
 首先看看用database/sql如何查询数据库
-我们用user来做例子，一般的工作流程是先做技术方案，其中排在比较前面的是数据库表的设计，大部分公司应该有严格的数据库权限控制，不会给线上程序使用比较危险的操作权限，比如创建删除数据库，表，删除数据等。
+我们用user表来做例子，一般的工作流程是先做技术方案，其中排在比较前面的是数据库表的设计，大部分公司应该有严格的数据库权限控制，不会给线上程序使用比较危险的操作权限，比如创建删除数据库，表，删除数据等。
 表结构如下：
 ```SQL
 CREATE TABLE `user` (
@@ -25,11 +25,11 @@ CREATE TABLE `user` (
 
 ```go
 type User struct {
-	Id    int64     `json:"id"`    // id字段
-	Name  string    `json:"name"`  // 名称
-	Age   int64     `json:"age"`   // 年龄
-	Ctime time.Time `json:"ctime"` // 创建时间
-	Mtime time.Time `json:"mtime"` // 更新时间
+	Id    int64     `json:"id"`    
+	Name  string    `json:"name"` 
+	Age   int64     
+	Ctime time.Time 
+	Mtime time.Time  			// 更新时间
 }
 ```
 定义好结构体，我们写一个查询年龄在20以下且按照id字段顺序排序的前20名用户的 go代码
@@ -87,22 +87,23 @@ func InsertUser(u *User) error {
 1. `ExecContext`方法中书写表字段名和结构体字段名的枯燥层度和字段数量是成正比的
 
 
+所以我们总结出来用`database/sql`标准库开发的痛点:
 ### 开发效率很低
 
-很显然写上面的那种代码是很耗费时间的，因为手误容易写错，无可避免要增加自测的时间。如果上面的代码能够自动生成，那么那将会极大的提高生产质量和效率并且减少human error的发生。
+很显然写上面的那种代码是很耗费时间的，因为手误容易写错，无可避免要增加自测的时间。如果上面的结构体`User`、 查询方法`FindUsers()` 以及插入方法`InsertUser()`代码能够自动生成，那么那将会极大的提高开发效率并且减少human error的发生从而提高开发质量。
 ### 心智负担很重 
 
 如果一个开发人员把大量的时间花在这些代码上，那么他其实是在浪费自己的时间，不管在工作中还是在个人项目中，应该把重点花在架构设计，业务逻辑设计，困难点攻坚上面，去探索和开拓自己没有经验的领域，这块Dao层的代码最好在10分钟内完成。
 
 ## ORM的核心组成
 
-明白了上面的痛点，和为了开发工作更舒服，我们尝试着自己去开发一个ORM，核心的地方在于两个方面：
+明白了上面的痛点，为了开发工作更舒服，更高效，我们尝试着自己去开发一个ORM，核心的地方在于两个方面：
 1. SQL语句要非硬编码，通过某种链式调用构造器帮助我构建SQL语句。
 2. 从数据库返回的数据可以自动映射赋值到结构体中。
 
 ![](/image/sqlbuilder-scanner.png)
 
-我们尝试做个简略版的查询语句构造器
+我们尝试做个简略版的查询语句构造器，要求能够通过链式调用保存SQL语句需要的元素。
 
 ### SQL SelectBuilder的实现
 ```go
@@ -180,7 +181,7 @@ func (s *SelectBuilder) Query() (string, []interface{}) {
 }
 
 ```
-1. 通过结构体上的方法调用返回自身，使其具有链式调用能力，并通过方法调用设置结构体中的值。
+1. 通过结构体上的方法调用返回自身，使其具有链式调用能力，并通过方法调用设置结构体中的值（构成SQL语句需要的元素）。
 ```go
 func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 	s.column = append(s.column, field...)
@@ -191,12 +192,30 @@ func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 2. `SelectBuilder` 包含性能较高的`strings.Builder` 来拼接字符串。
 3. `Query()`方法使用`SelectBuilder`自身已经赋值的元素构造，返回包含占位符的SQL语句和args参数。
 4. `[]func(s *SelectBuilder)`通过函数数组来创建查询条件，可以通过函数调用的顺序和层级来生成 AND OR 这种有嵌套关系的查询条件。
+5. `Where()` 传入的是查询条件，为可变参数列表，查询条件之间默认是AND关系。
 
+外部使用起来效果：
 
+```go 
+	b := SelectBuilder{builder: &strings.Builder{}}
+	sql, args := b.
+		Select("id", "name", "age", "ctime", "mtime").
+		From("user").
+		Where(GT("id", 0), GT("age", 0)).
+		OrderBy("id").
+		Limit(0, 20).
+		Query()
 
+```
 
 
 ### scanner的实现
+
+顾名思义scanner的作用就是把查询结果设置到对应的go对象上去，完成关系和对象的映射，关键核心就是通过golang结构体的字段后面的tag来和查询结果的表头一一对应。
+![](/image/scanner.png)
+
+
+具体实现如下：
 ```go
 func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	defer rows.Close()
@@ -272,14 +291,13 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 ```
 1. 以上主要的思想就是通过`reflect`包来获取传入dst的Slice类型，并通过反射创建对象，具体的步骤请仔细阅读注释。
 2. 通过指定的json tag 可以把查询结果和结构体字段mapping起来，即使查询语句中字段不按照表结构顺序。
-![](/image/scanner.png)
 3. ScanSlice是通用的Scanner。
 4. 使用反射创建对象没有传统的方式高效，但是换来的巨大的灵活性在某些场景下是值得的。
 
 
-
-
 ## 自动生成
+
+有了SQLBuilder和Scanner 我们就可以这样写查询函数了：
 
 ```go 
 func FindUserReflect() ([]*User, error) {
@@ -305,21 +323,48 @@ func FindUserReflect() ([]*User, error) {
 }
 
 ```
-生成的查询SQL语句如下：
+生成的查询SQL语句和args如下：
 ```SQL
 SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM `user` WHERE `id` > ? AND `age` > ? ORDER BY id LIMIT 20 OFFSET 0  [0 0]
 ```
 
-通过上面的使用的例子来看，我们的工作轻松了不少，第一是SQL语句不需要硬编码了，第二就是Scan不需要写大量的乏味的模板代码，着实帮我们省了很大的麻烦。 但是查询字段还需要我们自己手写，像这种
+通过上面的使用的例子来看，我们的工作轻松了不少：
+- 第一是SQL语句不需要硬编码了；
+- 第二是Scan不需要写大量结构体字段和的乏味的重复代码。
+着实帮我们省了很大的麻烦。 但是查询字段还需要我们自己手写，像这种
 ```go
 Select("id", "name", "age", "ctime", "mtime").
 ```
 其中传入的字段需要我们硬编码，我们可不可以再进一步，通过表结构定义来生成我们的golang结构体呢？答案是肯定的，要实现这一步我们需要一个SQL语句的[解析器](https://github.com/xwb1989/sqlparser)，把SQL DDL语句解析成go语言中的`struct`对象，其所包含的表名，列名、列类型、注释等都能获取到，再通过这些对象和写好的模板代码来生成我们实际业务使用的代码，这样写代码就能飞快了。
 
-比如我们生成
+举个模板代码的例子：
 ```go
-
-var Columns = []string{"id","name","age","ctime","mtime"}
+type {{.GoTableName}} struct {
+	{{- range .Fields }}
+    	{{ .GoColumnName }} {{  .GoColumnType }} `json:"{{ .ColumnName }}"` // {{ .ColumnComment }}
+    {{- end}}
+}
+const (
+    table = "{{.TableName}}"
+    {{- range .Fields}}
+        {{ .GoColumnName}} = "{{.ColumnName}}"  
+    {{- end }}
+)
+var columns = []string{
+	{{- range .Fields}}
+    {{ .GoColumnName}},
+    {{- end }}
+}
+```
+通过上面的模板我们用user表的DDL SQL语句生成如下代码：
+```go
+type User struct {
+	Id    int64     `json:"id"`    // id字段
+	Name  string    `json:"name"`  // 名称
+	Age   int64     `json:"age"`   // 年龄
+	Ctime time.Time `json:"ctime"` // 创建时间
+	Mtime time.Time `json:"mtime"` // 更新时间
+}
 const (
 	table = "user"
 	Id = "id"
@@ -328,6 +373,7 @@ const (
 	Ctime = "ctime"
 	Mtime = "mtime"
 )
+var Columns = []string{"id","name","age","ctime","mtime"}
 ```
 那么我们在查询的时候就可以这样使用
 ```go
@@ -336,9 +382,9 @@ Select(Columns...)
 ## 不止ORM
 
 如果我们可以根据表结构生成后端持久层的代码，那是不是我们可以扩展一步，可以不可以把后端GRPC API也同时生成呢？答案是肯定的。
-因为在大部分的开发中接口的功能就是暴露API,使外部能够通过RPC调用读写我们的数据库，所以理论上来说RPC接口的message结构和我们的后端持久成model，还有表结构的字段不会相差太大。
+因为在大部分的开发中接口的功能就是暴露API,使外部能够通过RPC调用读写我们的数据库，所以理论上来说RPC接口的message结构和我们的后端持久层model，还有表结构的字段不会相差太大。三者关系如下图所示：
 ![](/image/sql-go-proto.png)
-### GRPC API
+### GRPC Proto API
 
 一般在日常的开发中，我们对表做的一些操作离不开增删改查，我们给外部暴露的API也同样是如此，往往按照标准我们可以定义出针对某个表的 `Create`、`Delete` 、`Update` `Get` `List` 的 Method 和Request以及Response。比如下面的proto定义，用这个做模板，只需要把里面的User相关信息替换就行了。 
 
@@ -371,49 +417,61 @@ message User {
 message UserId{
     int64 id = 1 ;
 }
+```
 
-message UpdateUserReq{
-    User user = 1 ;
-    repeated string update_mask  = 2 ;
-}
-message ListUsersReq{
-    // number of page
-    int64 page = 1 ;
-    // default 20
-    int64 page_size = 2 ;
-    // order by  for example :  [-id]  -: DESC 
-    string order_by = 3 ; 
-    //  id > ?
-    int64 id_gt = 4;
-    // filter xxx like %?%
-    // string xxx_contains = 5;
-    // yyy > ?
-    // int64 yyy_gt = 6;
-}
-message ListUsersResp{
-    repeated User users = 1 ;
-    int64 total_count = 2 ;
-    int64 page_count = 3 ;
+相应的`go template`如下, 由于篇幅有限，以上只展示了部分`message`。
+
+```go
+syntax="proto3";
+
+{{- $c:=ne .Protopkg ""}}
+{{- if $c}}
+package {{.Protopkg}};
+{{- end}}
+option go_package = "/api";
+
+import "google/protobuf/empty.proto";
+
+service {{.GoTableName}}Service { 
+    rpc Create{{.GoTableName}}({{.GoTableName}})returns({{.GoTableName}});
+    rpc Delete{{.GoTableName}}({{.GoTableName}}{{.PrimaryKey.GoColumnName}})returns(google.protobuf.Empty);
+    rpc Update{{.GoTableName}}(Update{{.GoTableName}}Req)returns({{.GoTableName}});
+    rpc Get{{.GoTableName}}({{.GoTableName}}{{.PrimaryKey.GoColumnName}})returns({{.GoTableName}});
+    rpc List{{.GoTableName}}s(List{{.GoTableName}}sReq)returns(List{{.GoTableName}}sResp);
 }
 
+message {{.GoTableName}} {
+
+{{- range $index,$field := .Fields }}
+    //{{$field.ColumnComment}}
+    {{$field.ProtoType }}	{{ $field.ColumnName }} = {{Incr $index}} ; 
+{{- end}}  
+}
+
+message {{.GoTableName}}{{.PrimaryKey.GoColumnName}}{
+    {{.PrimaryKey.ProtoType}} {{.PrimaryKey.ColumnName}} = 1 ;
+}
 ```
 
 
 
-### GRPC Serice Implement
+### GRPC Serice 实现
 
-如果GRPC API定义能够自动化生成，那么GRPC Service的实现是不是也可以自动生成呢？毫无疑问，肯定是可以的。 涉及篇幅就不在本文详细说明。具体的开源实现可以参考[crud](http://github.com/hongshengjie/crud)
+如果GRPC API定义能够自动化生成，那么GRPC Service的实现是不是也可以自动生成呢？毫无疑问，肯定是可以的。 涉及篇幅就不在本文详细说明。具体的开源实现可以参考[crud](https://github.com/hongshengjie/crud)
 
 
 ## 总结
 1. 通过database/sql 库开发有较大痛点，ORM就是为了解决以上问题而生，其存在是有意义的。
 2. ORM两个关键的部分是SQLBuilder和Scanner的实现。
-3. 通过golang的template模板库我们可以从数据表结构定义直接生成 持久成代码，GRPC API，GRPC Service的实现，通过自动化工具成倍的提升开发效率，开发质量。
+3. ORM Scanner 使用反射创建对象在性能上肯定会有一定的损失，但是带来极大的灵活性。 
+3. 通过golang的template模板库我们可以从数据表结构定义直接生成 持久层代码，GRPC API，GRPC Service的实现，通过自动化工具成倍的提升开发效率，开发质量。
 
 
 
 ## 展望
 1. 服务端接口和持久层代码都能自动生成，那么前端呢？前端HTML的`form`或者`table`是否能和我们的GRPC message一一对应呢？JavaScript调用接口的代码也能通过模板自动生成？
-2. 未来是否可以只通过设计表结构，通过工具，我们们就能把后端和前端的代码都生成好，实现全自动化编程。我想这个是值得期待的。 
+2. 是否可以找到一个方法能够巧妙的规避Scanner使用反射创建对象带来的性能损耗？值得探索
+3. 未来是否可以只通过设计表结构，通过工具，我们们就能把后端和前端的代码都生成好，实现全自动化编程。我想这个是值得期待的。 
+
 
 
