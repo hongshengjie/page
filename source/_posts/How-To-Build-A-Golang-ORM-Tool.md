@@ -13,11 +13,11 @@ tags: [golang,orm,grpc,proto]
 表结构如下：
 ```SQL
 CREATE TABLE `user` (
-  `id` int(10) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id字段',
+  `id` int(10) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
   `name` varchar(100) NOT NULL COMMENT '名称',
   `age` int(11) NOT NULL DEFAULT '0' COMMENT '年龄',
   `ctime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `mtime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `mtime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
 ) ENGINE=InnoDB  DEFAULT CHARSET=utf8mb4
 ```
@@ -36,7 +36,7 @@ type User struct {
 
 ```go
 func FindUsers() ([]*User, error) {
-	rows, err := db.QueryContext(ctx, "SELECT SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM user WHERE `age`<? ORDER BY `id` DESC LIMIT 20 ", 20)
+	rows, err := db.QueryContext(ctx, "SELECT SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM user WHERE `age`<? ORDER BY `id` LIMIT 20 ", 20)
 	if err != nil {
 		return nil, err
 	}
@@ -63,34 +63,10 @@ func FindUsers() ([]*User, error) {
 3. 我们发现第1行SQL语句编写和`rows.Scan()`那行，写的枯燥层度是和表字段的数量成正比的，如果一个表有50个字段或者100个字段，手写是非常乏味的。
 4. 在开发过程中`rows.Close()` 和 `rows.Err()`忘记写是常见的错误。
 
-我们再看一下插入的写法：
-
-```go
-func InsertUser(u *User) error {
-	res, err := db.ExecContext(
-		ctx,
-		"INSERT INTO `user` (`id`,`name`,`age`,`ctime`,`mtime`) VALUE(?,?,?,?,?)",
-		u.Id, u.Name, u.Age, u.Ctime, u.Mtime,
-	)
-	if err != nil {
-		return err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return err
-	}
-	u.Id = id
-	return nil
-}
-```
-同样的问题
-1. `ExecContext`方法中书写表字段名和结构体字段名的枯燥层度和字段数量是成正比的
-
-
-所以我们总结出来用`database/sql`标准库开发的痛点:
+我们总结出来用`database/sql`标准库开发的痛点:
 ### 开发效率很低
 
-很显然写上面的那种代码是很耗费时间的，因为手误容易写错，无可避免要增加自测的时间。如果上面的结构体`User`、 查询方法`FindUsers()` 以及插入方法`InsertUser()`代码能够自动生成，那么那将会极大的提高开发效率并且减少human error的发生从而提高开发质量。
+很显然写上面的那种代码是很耗费时间的，因为手误容易写错，无可避免要增加自测的时间。如果上面的结构体`User`、 查询方法`FindUsers()` 代码能够自动生成，那么那将会极大的提高开发效率并且减少human error的发生从而提高开发质量。
 ### 心智负担很重 
 
 如果一个开发人员把大量的时间花在这些代码上，那么他其实是在浪费自己的时间，不管在工作中还是在个人项目中，应该把重点花在架构设计，业务逻辑设计，困难点攻坚上面，去探索和开拓自己没有经验的领域，这块Dao层的代码最好在10分钟内完成。
@@ -98,8 +74,8 @@ func InsertUser(u *User) error {
 ## ORM的核心组成
 
 明白了上面的痛点，为了开发工作更舒服，更高效，我们尝试着自己去开发一个ORM，核心的地方在于两个方面：
-1. SQL语句要非硬编码，通过某种链式调用构造器帮助我构建SQL语句。
-2. 从数据库返回的数据可以自动映射赋值到结构体中。
+1. SQLBuilder：SQL语句要非硬编码，通过某种链式调用构造器帮助我构建SQL语句。
+2. Scanner：从数据库返回的数据可以自动映射赋值到结构体中。
 
 ![](/image/sqlbuilder-scanner.png)
 
@@ -123,13 +99,7 @@ func (s *SelectBuilder) Select(field ...string) *SelectBuilder {
 	s.column = append(s.column, field...)
 	return s
 }
-func GT(field string, arg interface{}) func(s *SelectBuilder) {
-	return func(s *SelectBuilder) {
-		s.builder.WriteString("`" + field + "`" + " > ?")
-		s.args = append(s.args, arg)
-	}
 
-}
 func (s *SelectBuilder) From(name string) *SelectBuilder {
 	s.tabelName = name
 	return s
@@ -146,6 +116,12 @@ func (s *SelectBuilder) Limit(offset, limit int64) *SelectBuilder {
 	s.offset = &offset
 	s.limit = &limit
 	return s
+}
+func GT(field string, arg interface{}) func(s *SelectBuilder) {
+	return func(s *SelectBuilder) {
+		s.builder.WriteString("`" + field + "`" + " > ?")
+		s.args = append(s.args, arg)
+	}
 }
 func (s *SelectBuilder) Query() (string, []interface{}) {
 	s.builder.WriteString("SELECT ")
@@ -205,15 +181,14 @@ func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 		OrderBy("id").
 		Limit(0, 20).
 		Query()
-
 ```
 
 
 ### scanner的实现
 
 顾名思义scanner的作用就是把查询结果设置到对应的go对象上去，完成关系和对象的映射，关键核心就是通过golang结构体的字段后面的tag来和查询结果的表头一一对应。
-![](/image/scanner.png)
 
+![](/image/scanner.png)
 
 具体实现如下：
 ```go
@@ -232,10 +207,8 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	}
 	// 获取slice中的类型
 	struPointer := val.Type().Elem() // *main.User
-
 	// 指针指向的类型 具体结构体
 	stru := struPointer.Elem()      //  main.User
-
 
 	cols, err := rows.Columns()  // [id,name,age,ctime,mtime]
 	if err != nil {
@@ -245,8 +218,7 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	if stru.NumField() < len(cols) { // 5,5
 		return errors.New("NumField and cols not match")
 	}
-
-	//结构体的json tag的value 对应 字段在结构体中的index
+	//结构体的json tag的value对应字段在结构体中的index
 	tagIdx := make(map[string]int) //map tag -> field idx
 	for i := 0; i < stru.NumField(); i++ {
 		tagname := stru.Field(i).Tag.Get("json")
@@ -256,7 +228,7 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	}
 	resultType := make([]reflect.Type, 0, len(cols)) // [int64,string,int64,time.Time,time.Time]
 	index := make([]int, 0, len(cols))               // [0,1,2,3,4,5]
-	// 查找和列名相对应的结构体json tag name 的字段类型，保存类型和序号 到resultType 和 index 中
+	// 查找和列名相对应的结构体jsontag name的字段类型，保存类型和序号到resultType和index中
 	for _, v := range cols {
 		if i, ok := tagIdx[v]; ok {
 			resultType = append(resultType, stru.Field(i).Type)
@@ -325,12 +297,10 @@ func FindUserReflect() ([]*User, error) {
 SELECT `id`,`name`,`age`,`ctime`,`mtime` FROM `user` WHERE `id` > ? AND `age` > ? ORDER BY id LIMIT 20 OFFSET 0  [0 0]
 ```
 
-
-
 ## 自动生成
 通过上面的使用的例子来看，我们的工作轻松了不少：
-- 第一是SQL语句不需要硬编码了；
-- 第二是Scan不需要写大量结构体字段和的乏味的重复代码。
+- 第一：SQL语句不需要硬编码了；
+- 第二：Scan不需要写大量结构体字段和的乏味的重复代码。
 着实帮我们省了很大的麻烦。 但是查询字段还需要我们自己手写，像这种
 ```go
 Select("id", "name", "age", "ctime", "mtime").
@@ -395,13 +365,7 @@ Select(Columns...)
 ```
 ## reflect真的有必要吗？
 
-由于我们SELECT时选择查找的字段和顺序是不固定的，
-我们有可能 `SELECT id,name,age FROM user` ，
-也可能 `SELECT name,id FROM user`，有很大的任意性，这种情况使用反射来确定结构体tag和查询的列名来的映射关系是必须的。
-但是有一种情况我们不需要用到反射，而且是一种最常用的情况，即：查询的字段名和表结构的列名一致，且顺序一致。
-这时候我们可以这么写，通过`DeepEqual`来判断查询字段和表结构字段是否一致来决定需要通过反射还是通过传统方法来创建对象，
-用传统方式创建对象的第12行令我们痛苦，可以通过模板来自动生成避免手写， 
-这样既灵活方面好用，性能又没有下降，看起来是一个比较完美的解决方案。 
+由于我们SELECT时选择查找的字段和顺序是不固定的，我们有可能 `SELECT id, name, age FROM user`，也可能 `SELECT name, id FROM user`，有很大的任意性，这种情况使用反射出来的结构体tag和查询的列名来确定映射关系是必须的。但是有一种情况我们不需要用到反射，而且是一种最常用的情况，即：查询的字段名和表结构的列名一致，且顺序一致。这时候我们可以这么写，通过`DeepEqual`来判断查询字段和表结构字段是否一致且顺序一致来决定是否需要通过反射还是通过传统方法来创建对象。用传统方式创建对象（如下图第12行）令我们痛苦，不过可以通过模板来自动生成避免手写，这样既灵活方便好用，性能又没有损耗，看起来是一个比较完美的解决方案。 
 ```go
 func FindUserNoReflect(b *SelectBuilder) ([]*User, error) {
 	sql, args := b.Query()
@@ -431,98 +395,14 @@ func FindUserNoReflect(b *SelectBuilder) ([]*User, error) {
 	return result, nil
 }
 ```
-## 不止ORM
-
-如果我们可以根据表结构生成后端持久层的代码，那是不是我们可以扩展一步，可以不可以把后端GRPC API也同时生成呢？答案是肯定的。
-因为在大部分的开发中接口的功能就是暴露API,使外部能够通过RPC调用读写我们的数据库，所以理论上来说RPC接口的message结构和我们的后端持久层model，还有表结构的字段不会相差太大。三者关系如下图所示：
-![](/image/sql-go-proto.png)
-### GRPC Proto API
-
-一般在日常的开发中，我们对表做的一些操作离不开增删改查，我们给外部暴露的API也同样是如此，往往按照标准我们可以定义出针对某个表的 `Create`、`Delete` 、`Update` `Get` `List` 的 Method 和Request以及Response。比如下面的proto定义，用这个做模板，只需要把里面的User相关信息替换就行了。 
-
-```proto
-syntax="proto3";
-package example;
-option go_package = "/api";
-import "google/protobuf/empty.proto";
-service UserService { 
-    rpc CreateUser(User)returns(User);
-    rpc DeleteUser(UserId)returns(google.protobuf.Empty);
-    rpc UpdateUser(UpdateUserReq)returns(User);
-    rpc GetUser(UserId)returns(User);
-    rpc ListUsers(ListUsersReq)returns(ListUsersResp);
-}
-
-message User {
-    //id字段
-    int64	id = 1 ;
-    //名称
-    string	name = 2 ;
-    //年龄
-    int64	age = 3 ;
-    //创建时间
-    string	ctime = 4 ;
-    //更新时间
-    string	mtime = 5 ;  
-}
-
-message UserId{
-    int64 id = 1 ;
-}
-```
-
-相应的`go template`如下, 由于篇幅有限，以上只展示了部分`message`。
-
-```go
-syntax="proto3";
-
-{{- $c:=ne .Protopkg ""}}
-{{- if $c}}
-package {{.Protopkg}};
-{{- end}}
-option go_package = "/api";
-
-import "google/protobuf/empty.proto";
-
-service {{.GoTableName}}Service { 
-    rpc Create{{.GoTableName}}({{.GoTableName}})returns({{.GoTableName}});
-    rpc Delete{{.GoTableName}}({{.GoTableName}}{{.PrimaryKey.GoColumnName}})returns(google.protobuf.Empty);
-    rpc Update{{.GoTableName}}(Update{{.GoTableName}}Req)returns({{.GoTableName}});
-    rpc Get{{.GoTableName}}({{.GoTableName}}{{.PrimaryKey.GoColumnName}})returns({{.GoTableName}});
-    rpc List{{.GoTableName}}s(List{{.GoTableName}}sReq)returns(List{{.GoTableName}}sResp);
-}
-
-message {{.GoTableName}} {
-
-{{- range $index,$field := .Fields }}
-    //{{$field.ColumnComment}}
-    {{$field.ProtoType }}	{{ $field.ColumnName }} = {{Incr $index}} ; 
-{{- end}}  
-}
-
-message {{.GoTableName}}{{.PrimaryKey.GoColumnName}}{
-    {{.PrimaryKey.ProtoType}} {{.PrimaryKey.ColumnName}} = 1 ;
-}
-```
-
-
-
-### GRPC Serice 实现
-
-如果GRPC API定义能够自动化生成，那么GRPC Service的实现是不是也可以自动生成呢？毫无疑问，肯定是可以的。 涉及篇幅就不在本文详细说明。具体的开源实现可以参考[crud](https://github.com/hongshengjie/crud)
-
 
 ## 总结
 1. 通过database/sql 库开发有较大痛点，ORM就是为了解决以上问题而生，其存在是有意义的。
-2. ORM两个关键的部分是SQLBuilder和Scanner的实现。
+2. ORM 两个关键的部分是SQLBuilder和Scanner的实现。
 3. ORM Scanner 使用反射创建对象在性能上肯定会有一定的损失，但是带来极大的灵活性,同时在查询全表字段这种特殊情况下规避使用反射来提高性能。 
-3. 通过golang的template模板库我们可以从数据表结构定义直接生成 持久层代码，GRPC API，GRPC Service的实现，通过自动化工具成倍的提升开发效率，开发质量。
-
-
 
 ## 展望
-1. 服务端接口和持久层代码都能自动生成，那么前端呢？前端HTML的`form`或者`table`是否能和我们的GRPC message一一对应呢？JavaScript调用接口的代码也能通过模板自动生成？
-2. 未来是否可以只通过设计表结构，通过工具，我们们就能把后端和前端的代码都生成好，实现全自动化编程。我想这个是值得期待的。 
+2. 通过表结构，我们可以生成对应的结构体和持久层增删改查代码，我们再往前扩展一步，能否通过表结构生成GRPC API定义的proto格式的message，以及一些常用的CRUD GRPC接口。通过工具，我们甚至可以把前端的代码都生成好，实现全自动化编程。我想这个是值得期待的。开源实现可以参考[crud](https://github.com/hongshengjie/crud)
 
 
 
