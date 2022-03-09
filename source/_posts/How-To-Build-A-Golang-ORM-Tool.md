@@ -29,7 +29,7 @@ type User struct {
 	Name  string    `json:"name"` 
 	Age   int64     
 	Ctime time.Time 
-	Mtime time.Time  			// 更新时间
+	Mtime time.Time  // 更新时间
 }
 ```
 定义好结构体，我们写一个查询年龄在20以下且按照id字段顺序排序的前20名用户的 go代码
@@ -74,12 +74,14 @@ func FindUsers() ([]*User, error) {
 ## ORM的核心组成
 
 明白了上面的痛点，为了开发工作更舒服，更高效，我们尝试着自己去开发一个ORM，核心的地方在于两个方面：
+![](/image/sqlbuilder-scanner.png)
 1. SQLBuilder：SQL语句要非硬编码，通过某种链式调用构造器帮助我构建SQL语句。
 2. Scanner：从数据库返回的数据可以自动映射赋值到结构体中。
 
-![](/image/sqlbuilder-scanner.png)
 
-我们尝试做个简略版的查询语句构造器，要求能够通过链式调用保存SQL语句需要的元素。
+
+我们尝试做个简略版的查询语句构造器,最终我们要达到如下图所示的效果。
+![](/image/sqlbuilder.png)
 
 ### SQL SelectBuilder的实现
 ```go
@@ -182,8 +184,7 @@ func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 		Limit(0, 20).
 		Query()
 ```
-图解
-![](/image/sqlbuilder.png)
+
 
 
 
