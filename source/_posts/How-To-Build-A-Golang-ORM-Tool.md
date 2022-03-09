@@ -79,13 +79,16 @@ func FindUsers() ([]*User, error) {
 2. Scanner：从数据库返回的数据可以自动映射赋值到结构体中。
 
 
+### SQL SelectBuilder
 
 我们尝试做个简略版的查询语句构造器,最终我们要达到如下图所示的效果。
+
 ![](/image/sqlbuilder.png)
 
-### SQL SelectBuilder的实现
-```go
+我们可以通过和SQL关键字同名的方法来表达SQL语句的固有关键字，通过go方法参数来设置其中动态变化的元素，这样链式调用和写SQL语句的思维顺序是一致的，只不过我们之前通过硬编码的方式变成了方法调用。 
 
+具体代码如下：
+```go
 type SelectBuilder struct {
 	builder   *strings.Builder
 	column    []string
@@ -159,18 +162,11 @@ func (s *SelectBuilder) Query() (string, []interface{}) {
 }
 
 ```
-1. 通过结构体上的方法调用返回自身，使其具有链式调用能力，并通过方法调用设置结构体中的值（构成SQL语句需要的元素）。
-```go
-func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
-	s.column = append(s.column, field...)
-	return s 
-}
-```
-
+1. 通过结构体上的方法调用返回自身，使其具有链式调用能力，并通过方法调用设置结构体中的值，用以构成SQL语句需要的元素。
 2. `SelectBuilder` 包含性能较高的`strings.Builder` 来拼接字符串。
-3. `Query()`方法使用`SelectBuilder`自身已经赋值的元素构造，返回包含占位符的SQL语句和args参数。
-4. `[]func(s *SelectBuilder)`通过函数数组来创建查询条件，可以通过函数调用的顺序和层级来生成 AND OR 这种有嵌套关系的查询条件。
-5. `Where()` 传入的是查询条件，为可变参数列表，查询条件之间默认是AND关系。
+3. `Query()`方法构建出真正的SQL语句，返回包含占位符的SQL语句和args参数。
+4. `[]func(s *SelectBuilder)`通过函数数组来创建查询条件，可以通过函数调用的顺序和层级来生成 AND OR这种有嵌套关系的查询条件子句。
+5. `Where()` 传入的是查询条件函数，为可变参数列表，查询条件之间默认是AND关系。
 
 外部使用起来效果：
 
@@ -185,12 +181,9 @@ func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 		Query()
 ```
 
+### Scanner的实现
 
-
-
-### scanner的实现
-
-顾名思义scanner的作用就是把查询结果设置到对应的go对象上去，完成关系和对象的映射，关键核心就是通过golang结构体的字段后面的tag来和查询结果的表头一一对应。
+顾名思义Scanner的作用就是把查询结果设置到对应的go对象上去，完成关系和对象的映射，关键核心就是通过反射获知传入对象的类型和字段类型，通过反射创建对象和值，并通过golang结构体的字段后面的tag来和查询结果的表头一一对应，达到动态给结构字段赋值的能力。 
 
 ![](/image/scanner.png)
 
@@ -265,13 +258,15 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 	return rows.Err()
 }
 ```
-1. 以上主要的思想就是通过`reflect`包来获取传入dst的Slice类型，并通过反射创建对象，具体的步骤请仔细阅读注释。
+通过反射赋值流程
+![](/image/reflect.png)
+
+1. 以上主要的思想就是通过`reflect`包来获取传入dst的Slice类型，并通过反射创建其包含的对象，具体的步骤和解释请仔细阅读注释和图例。
 2. 通过指定的json tag 可以把查询结果和结构体字段mapping起来，即使查询语句中字段不按照表结构顺序。
 3. ScanSlice是通用的Scanner。
-4. 使用反射创建对象没有传统的方式高效，但是换来的巨大的灵活性在某些场景下是值得的。
+4. 使用反射创建对象明显创建了多余的对象，没有传统的方式赋值高效，但是换来的巨大的灵活性在某些场景下是值得的。
 
-流程图解
-![](/image/reflect.png)
+
 
 有了SQLBuilder和Scanner 我们就可以这样写查询函数了：
 
@@ -314,7 +309,7 @@ Select("id", "name", "age", "ctime", "mtime").
 ```
 其中传入的字段需要我们硬编码，我们可不可以再进一步，通过表结构定义来生成我们的golang结构体呢？答案是肯定的，要实现这一步我们需要一个SQL语句的[解析器](https://github.com/xwb1989/sqlparser)，把SQL DDL语句解析成go语言中如下的`Table`对象，其所包含的表名，列名、列类型、注释等都能获取到，再通过这些对象和写好的模板代码来生成我们实际业务使用的代码。
 
-举个模板代码的例子：
+Table对象如下：
 ```go
 type Table struct {
 	TableName   string    // table name
@@ -328,7 +323,7 @@ type Column struct {
 	ColumnComment string // column_comment
 }
 ```
-使用以上`Table`对象的模板：
+使用以上`Table`对象的模板代码：
 ```go
 type {{.GoTableName}} struct {
 	{{- range .Fields }}
@@ -347,7 +342,7 @@ var columns = []string{
     {{- end }}
 }
 ```
-通过上面的模板我们用user表的DDL SQL语句生成如下代码：
+通过上面的模板我们用user表的建表SQL语句生成如下代码：
 ```go
 type User struct {
 	Id    int64     `json:"id"`    // id字段
@@ -370,9 +365,11 @@ var Columns = []string{"id","name","age","ctime","mtime"}
 ```go
 Select(Columns...)
 ```
+通过模板自动生成代码，可以大大的减轻开发编码负担，使我们从繁重的代码中解放出来。
+
 ## reflect真的有必要吗？
 
-由于我们SELECT时选择查找的字段和顺序是不固定的，我们有可能 `SELECT id, name, age FROM user`，也可能 `SELECT name, id FROM user`，有很大的任意性，这种情况使用反射出来的结构体tag和查询的列名来确定映射关系是必须的。但是有一种情况我们不需要用到反射，而且是一种最常用的情况，即：查询的字段名和表结构的列名一致，且顺序一致。这时候我们可以这么写，通过`DeepEqual`来判断查询字段和表结构字段是否一致且顺序一致来决定是否需要通过反射还是通过传统方法来创建对象。用传统方式创建对象（如下图第12行）令我们痛苦，不过可以通过模板来自动生成避免手写，这样既灵活方便好用，性能又没有损耗，看起来是一个比较完美的解决方案。 
+由于我们SELECT时选择查找的字段和顺序是不固定的，我们有可能 `SELECT id, name, age FROM user`，也可能 `SELECT name, id FROM user`，有很大的任意性，这种情况使用反射出来的结构体tag和查询的列名来确定映射关系是必须的。但是有一种情况我们不需要用到反射，而且是一种最常用的情况，即：查询的字段名和表结构的列名一致，且顺序一致。这时候我们可以这么写，通过`DeepEqual`来判断查询字段和表结构字段是否一致且顺序一致来决定是否通过反射还是通过传统方法来创建对象。用传统方式创建对象（如下图第12行）令我们编码痛苦，不过可以通过模板来自动生成下面的代码，以避免手写，这样既灵活方便好用，性能又没有损耗，看起来是一个比较完美的解决方案。 
 ```go
 func FindUserNoReflect(b *SelectBuilder) ([]*User, error) {
 	sql, args := b.Query()
