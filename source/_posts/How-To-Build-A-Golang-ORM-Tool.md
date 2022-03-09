@@ -182,6 +182,9 @@ func(s *SelectBuilder)Select(field ...string)*SelectBuilder{
 		Limit(0, 20).
 		Query()
 ```
+图解
+![](/image/sqlbuilder.png)
+
 
 
 ### scanner的实现
@@ -265,6 +268,9 @@ func ScanSlice(rows *sql.Rows, dst interface{}) error {
 2. 通过指定的json tag 可以把查询结果和结构体字段mapping起来，即使查询语句中字段不按照表结构顺序。
 3. ScanSlice是通用的Scanner。
 4. 使用反射创建对象没有传统的方式高效，但是换来的巨大的灵活性在某些场景下是值得的。
+
+流程图解
+![](/image/reflect.png)
 
 有了SQLBuilder和Scanner 我们就可以这样写查询函数了：
 
