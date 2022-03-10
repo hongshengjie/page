@@ -156,7 +156,7 @@ func (s *SelectBuilder) Query() (string, []interface{}) {
 	}
 	if s.offset != nil {
 		s.builder.WriteString(" OFFSET ")
-		s.builder.WriteString(strconv.FormatInt(*s.limit, 10))
+		s.builder.WriteString(strconv.FormatInt(*s.offset, 10))
 	}
 	return s.builder.String(), s.args
 }
