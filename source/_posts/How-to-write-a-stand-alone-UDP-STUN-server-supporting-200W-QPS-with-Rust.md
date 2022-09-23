@@ -9,18 +9,31 @@ tags: [rust,udp,stun]
 stun服务器的逻辑非常简单，收一条udp消息，把它解码为stun的message，如果解码成功了，取到他的source ip port 再往请求方返回一个stun的message消息。再无其他。
 
 在直播的p2p的场景下，当一个用户打开某个直播间，他会要求马上和12用户建立p2p的连接，和这12个用户建连的过程是ICE的过程，是并行的
-那么可以认为一个用户会有12QPS，假设 当一个直播间突然有100w用户的时候，这100w用户同时寻找其中的12个用户建连，那么对stun就会有1200w QPS，好在直播间的进入是一个渐进的过程，并且一个用户连满了12 用户之后 就并不会再建连请求stun，所以真实的场景没有那么夸张，但是某些情况下，同个直播间有可能会有1000w人，如果支撑1000w人的直播p2p成功，对服务端的抗压能力是个很大的考验，任何开源的软件都无法满足这样的场景。
-
+那么可以认为一个用户会有12QPS，假设 当一个直播间突然有100w用户的时候，这100w用户同时寻找其中的12个用户建连，那么对stun就会有1200w QPS，好在直播间的进入是一个渐进的过程，并且一个用户连满了12 用户之后 就并不会再建连请求stun，所以真实的场景没有那么夸张，但是某些情况下，同个直播间有可能会有1000w人，如何支撑1000w人的直播p2p成功，对服务端的抗压能力是个很大的考验，任何开源的软件都无法满足这样的场景。
 
 所以我们只能考虑自研
 
+### stun 协议
+
+#### stun message
+所有的STUN meesage 用大数编码的二进制数据，以20字节的header开头，接着跟着0个或者多个属性（Attribute），
+STUN header 包含消息类型、magic cookie、 transaction ID
+和 message length
+
+![](../image/stunheader.png)
+
+message type : request 、success failure response、indication 
+
+magic cookie : fixed value 0x2112A442
+
+transation ID : uniquely identify STUN transactions.
+
 语言的选择
+
+
+
 
 多线程
 
-linux的api
-
-
-
-
+linux的独有的api
 
