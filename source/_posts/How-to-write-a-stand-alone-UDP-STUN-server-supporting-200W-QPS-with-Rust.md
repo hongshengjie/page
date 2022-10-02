@@ -1,5 +1,5 @@
 ---
-title: 如何写一个单机支持200wQPS的STUN服务器
+title: 如何使用rust写出单机支持200万PPS的STUN服务器
 date: 2022-03-28 17:45:48
 tags: [rust,udp,stun]
 ---
@@ -27,42 +27,82 @@ transation ID : uniquely identify STUN transactions.
 
 当然协议解析的工作我们不用亲自做，使用已有的开源库即可 github.com/webrtc-rs/stun;
 
+利用stun的第三方库我们可以很快的写出服务端解析请求数据包成为stun message,如果解析成功我们会得到一个Message的实例，如果不成功我们返回None;
 ```rust
-
-```
-由于nix库封装了libc的ffi调用函数，所有我们直接拿过来用就好了
-
-我们先写个单线程的echo程序
-引入包
-```rust
-use nix::sys::socket;
-use nix::sys::socket::{AddressFamily, InetAddr, MsgFlags, SockAddr, SockFlag, SockType};
 use std::net::SocketAddr;
-use std::string::String;
-```
-```rust
-fn main() {
-    let addr_str = format!("0.0.0.0:{}", 3478);
-    run(addr_str)
-}
-fn run(addr_str: String) {
-    let socket_addr: SocketAddr = addr_str.parse().unwrap();
-    let inet_addr = InetAddr::from_std(&socket_addr);
-    let skt_addr = SockAddr::new_inet(inet_addr);
-    let skt = socket::socket(AddressFamily::Inet,SockType::Datagram,SockFlag::empty(),None,).unwrap();
-    socket::bind(skt, &skt_addr).unwrap();
-    let mut buf = [0u8; 50];
-    loop {
-        if let Ok((_, src_addr_op)) = socket::recvfrom(skt, &mut buf) {
-            if let Some(src_addr) = src_addr_op {
-                {
-                    _ = socket::sendto(skt, &buf, &src_addr, MsgFlags::MSG_DONTWAIT);
-                }
+use stun::message::*;
+use stun::xoraddr::*;
+use nix::sys::socket::SockAddr;
+
+fn process_stun_request(src_addr: SockAddr, buf: Vec<u8>) -> Option<Message> {
+    let mut msg = Message::new();
+    msg.raw = buf;
+    if msg.decode().is_err() {
+        return None;
+    }
+    if msg.typ != BINDING_REQUEST {
+        return None;
+    }
+    match src_addr.to_string().parse::<SocketAddr>() {
+        Err(_) => return None,
+        Ok(src_skt_addr) => {
+            let xoraddr = XorMappedAddress {
+                ip: src_skt_addr.ip(),
+                port: src_skt_addr.port(),
+            };
+            msg.typ = BINDING_SUCCESS;
+            msg.write_header();
+            match xoraddr.add_to(&mut msg) {
+                Err(_) => None,
+                Ok(_) => Some(msg),
             }
         }
     }
 }
+```
 
+
+nix库封装了libc的ffi调用函数，提供了非常友好的且Safe的*nix系统调用API,系统调用非常方便。我们需要recvmsg 和recvmmsg 以及sendmsg 和sendmmsg都通过该库来实现。 
+
+我们先写个单线程的stun服务器,方面说明，我们对所有的错误进行了忽略
+添加引入包
+```rust
+use nix::sys::socket::{
+    self, sockopt, AddressFamily, InetAddr, MsgFlags, SockFlag, SockType,
+};
+```
+
+```rust
+fn main() {
+    let inet_addr = InetAddr::new(IpAddr::new_v4(0, 0, 0, 0), 3478);
+    run_single_thread(inet_addr)
+}
+
+pub fn run_single_thread(inet_addr: InetAddr) {
+    let skt_addr = SockAddr::new_inet(inet_addr);
+    let skt = socket::socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    )
+    .unwrap();
+    socket::bind(skt, &skt_addr).unwrap();
+    let mut buf = [0u8; 50];
+    loop {
+        match socket::recvfrom(skt, &mut buf) {
+            Err(_) => {}
+            Ok((len, src_addr_op)) => match src_addr_op {
+                None => {}
+                Some(src_addr) => {
+                    if let Some(msg) = process_stun_request(src_addr, buf[..len].to_vec()) {
+                        _ = socket::sendto(skt, &msg.raw, &src_addr, MsgFlags::MSG_DONTWAIT);
+                    }
+                }
+            },
+        }
+    }
+}
 ```
 
 网卡多队列:
@@ -80,15 +120,131 @@ SO_REUSEPORT: 在Linux kernel 3.9带来了SO_REUSEPORT特性， 这是一个sock
 - 内核层面实现了负载均衡
 - 安全层面 监听同一个端口的socket只能位于同一个用户下
 
+在代码层面我们做两处改动
+1. main函数改成如下
 
 ```rust
-
+fn main() {
+    let inet_addr = InetAddr::new(IpAddr::new_v4(0, 0, 0, 0), 3478);
+    let cpu_num = num_cpus::get();
+    let mut i = 1;
+    while i <= cpu_num {
+        let inet_addr_n = inet_addr.clone();
+        thread::spawn(move || run_reuse_port(inet_addr_n));
+        i += 1;
+    }
+    run_reuse_port(inet_addr)
+}
 ```
 
-linux的独有的api:
+2. socket 添加 ReusePort 选项 
+
+```rust
+pub fn run_reuse_port(inet_addr: InetAddr) {
+    ...
+    socket::setsockopt(skt, sockopt::ReusePort, &true).unwrap();
+    socket::bind(skt, &skt_addr).unwrap();
+    ...
+}
+```
+
+
+通过上面的步骤，我们已经将单线程的服务改成了多线程，极大的提高了服务器的性能，后面我们继续使用linux的独有的api,sendmmsg和recvmmsg 再把服务器性能提高30%:
+
 1. 在一个socket上接受和发送多条消息，recvmmsg()系统调用是recvmsg的扩展，他允许调用着通过一次系统调用接受多条消息，支持设置超时时间和每批次接受消息的数量。
 
 2. sendmmsg()也是一样的原理通过减少系统调用的次数来降低cpu的使用率，从而提高应用的性能
 
+添加引入包
+```rust
+#[cfg(any(target_os = "linux"))]
+use nix::sys::socket::{ RecvMmsgData, SendMmsgData};
 
-实现语言的选择:
+#[cfg(any(target_os = "linux"))]
+pub fn run_reuse_port_recv_send_mmsg(inet_addr: InetAddr) {
+    let skt_addr = SockAddr::new_inet(inet_addr);
+    let skt = socket::socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    )
+    .unwrap();
+    socket::setsockopt(skt, sockopt::ReusePort, &true).unwrap();
+    socket::bind(skt, &skt_addr).unwrap();
+    loop {
+        let mut recv_msg_list = std::collections::LinkedList::new();
+        let mut receive_buffers = [[0u8; 50]; 1000];
+        let iovs: Vec<_> = receive_buffers
+            .iter_mut()
+            .map(|buf| [IoVec::from_mut_slice(&mut buf[..])])
+            .collect();
+        for iov in &iovs {
+            recv_msg_list.push_back(RecvMmsgData {
+                iov,
+                cmsg_buffer: None,
+            })
+        }
+
+        let time_spec = TimeSpec::from_duration(Duration::from_micros(10));
+        let resp_result =
+            socket::recvmmsg(skt, &mut recv_msg_list, MsgFlags::empty(), Some(time_spec));
+
+        match resp_result {
+            Err(_) => {}
+            Ok(resp) => {
+                let mut msgs = Vec::new();
+                let mut src_addr_vec = Vec::new();
+
+                for recv_msg in resp {
+                    src_addr_vec.push(recv_msg.address)
+                }
+                for (buf, src_addr_opt) in zip(receive_buffers, src_addr_vec) {
+                    match src_addr_opt {
+                        None => {}
+                        Some(src_addr) => {
+                            if let Some(msg) = process_stun_request(src_addr, buf.to_vec()) {
+                                _ = socket::sendto(
+                                    skt,
+                                    &msg.raw,
+                                    &src_addr,
+                                    MsgFlags::MSG_DONTWAIT,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                let mut send_msg_list = std::collections::LinkedList::new();
+                let send_data: Vec<_> = msgs
+                    .iter()
+                    .map(|(buf, src_addr)| {
+                        let iov = [IoVec::from_slice(&buf[..])];
+                        let addr = *src_addr;
+                        (iov, addr)
+                    })
+                    .collect();
+
+                for (iov, addrx) in send_data {
+                    let send_msg = SendMmsgData {
+                        iov,
+                        cmsgs: &[],
+                        addr: addrx,
+                        _lt: Default::default(),
+                    };
+                    send_msg_list.push_back(send_msg);
+                }
+
+                _ = socket::sendmmsg(skt, send_msg_list.iter(), MsgFlags::MSG_DONTWAIT);
+            }
+        }
+    }
+}
+
+
+```
+
+总结：
+1. 使用多线程和网卡多队列绑核的特性提高性能充分利用起来网卡多队列和linux系统本省具有的能力
+2. 使用linux sendmmsg 和recvmmsg 可以提高很大的性能，批量收取的消息量Vlen需要根据各个业务的时机情况去设置，并且加上合理的超时时间，这才能发挥这两个api的最大功效
+3. rust是一门性能非常优秀，开发工具十分完善，语法设计十分优雅的语言，值得投入。 
